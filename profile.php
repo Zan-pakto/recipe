@@ -9,240 +9,204 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-// Get user data
-$stmt = $conn->prepare("
+// Get user's profile information
+$stmt = $GLOBALS['pdo']->prepare("
     SELECT u.*, 
-           COUNT(DISTINCT r.id) as total_recipes,
-           COUNT(DISTINCT rev.recipe_id) as total_reviews,
-           (SELECT COUNT(*) FROM recipe_likes WHERE user_id = u.id) as total_likes_given,
-           (SELECT COUNT(*) FROM recipe_likes rl 
-            JOIN recipes r2 ON rl.recipe_id = r2.id 
-            WHERE r2.user_id = u.id) as total_likes_received
+           COUNT(DISTINCT r.id) as recipe_count,
+           COUNT(DISTINCT rev.id) as review_count,
+           COUNT(DISTINCT rl.id) as like_count
     FROM users u
     LEFT JOIN recipes r ON u.id = r.user_id
     LEFT JOIN reviews rev ON u.id = rev.user_id
+    LEFT JOIN recipe_likes rl ON u.id = rl.user_id
     WHERE u.id = ?
     GROUP BY u.id
 ");
-$stmt->bind_param("i", $_SESSION['user_id']);
-$stmt->execute();
-$user = $stmt->get_result()->fetch_assoc();
 
-// Get user's recent activity
-$stmt = $conn->prepare("
-    (SELECT 'recipe' as type, r.id, r.title, r.created_at, NULL as rating, NULL as comment
-     FROM recipes r
-     WHERE r.user_id = ?
-     ORDER BY r.created_at DESC
-     LIMIT 5)
-    UNION ALL
-    (SELECT 'review' as type, r.id, r.title, rev.created_at, rev.rating, rev.comment
-     FROM reviews rev
-     JOIN recipes r ON rev.recipe_id = r.id
-     WHERE rev.user_id = ?
-     ORDER BY rev.created_at DESC
-     LIMIT 5)
-    ORDER BY created_at DESC
-    LIMIT 10
+$stmt->execute([$_SESSION['user_id']]);
+$user = $stmt->fetch();
+
+// Get user's recent recipes
+$stmt = $GLOBALS['pdo']->prepare("
+    SELECT r.*, 
+           COUNT(DISTINCT rev.id) as review_count,
+           AVG(rev.rating) as avg_rating,
+           COUNT(DISTINCT rl.id) as like_count
+    FROM recipes r
+    LEFT JOIN reviews rev ON r.id = rev.recipe_id
+    LEFT JOIN recipe_likes rl ON r.id = rl.recipe_id
+    WHERE r.user_id = ?
+    GROUP BY r.id
+    ORDER BY r.created_at DESC
+    LIMIT 5
 ");
-$stmt->bind_param("ii", $_SESSION['user_id'], $_SESSION['user_id']);
-$stmt->execute();
-$activities = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
-// Handle profile update
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $username = sanitizeInput($_POST['username']);
-    $email = sanitizeInput($_POST['email']);
-    $bio = sanitizeInput($_POST['bio']);
-    $errors = [];
-    
-    // Validate inputs
-    if (empty($username)) $errors[] = "Username is required";
-    if (empty($email)) $errors[] = "Email is required";
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) $errors[] = "Invalid email format";
-    
-    // Check if username or email already exists
-    if (empty($errors)) {
-        $stmt = $conn->prepare("SELECT id FROM users WHERE (username = ? OR email = ?) AND id != ?");
-        $stmt->bind_param("ssi", $username, $email, $_SESSION['user_id']);
-        $stmt->execute();
-        if ($stmt->get_result()->num_rows > 0) {
-            $errors[] = "Username or email already exists";
-        }
-    }
-    
-    // Update profile if no errors
-    if (empty($errors)) {
-        $stmt = $conn->prepare("UPDATE users SET username = ?, email = ?, bio = ? WHERE id = ?");
-        $stmt->bind_param("sssi", $username, $email, $bio, $_SESSION['user_id']);
-        
-        if ($stmt->execute()) {
-            $_SESSION['success_message'] = "Profile updated successfully!";
-            header("Location: profile.php");
-            exit();
-        } else {
-            $errors[] = "Error updating profile: " . $stmt->error;
-        }
-    }
-}
+$stmt->execute([$_SESSION['user_id']]);
+$recent_recipes = $stmt->fetchAll();
+
+// Get user's recent reviews
+$stmt = $GLOBALS['pdo']->prepare("
+    SELECT rev.*, r.title as recipe_title, r.image_path
+    FROM reviews rev
+    JOIN recipes r ON rev.recipe_id = r.id
+    WHERE rev.user_id = ?
+    ORDER BY rev.created_at DESC
+    LIMIT 5
+");
+
+$stmt->execute([$_SESSION['user_id']]);
+$recent_reviews = $stmt->fetchAll();
+
+$page_title = "My Profile";
+include 'includes/header.php';
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Profile - <?php echo APP_NAME; ?></title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="css/styles.css">
-</head>
-<body class="bg-gray-50">
-    <?php include 'includes/header.php'; ?>
-    
-    <main class="container mx-auto px-4 py-8">
-        <div class="max-w-4xl mx-auto">
-            <!-- Profile Header -->
-            <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-6">
-                <div class="p-6 sm:p-8">
-                    <div class="flex items-center space-x-6">
-                        <div class="w-24 h-24 bg-[#ff6b00] rounded-full flex items-center justify-center text-white text-4xl font-bold">
-                            <?php echo strtoupper(substr($user['username'], 0, 1)); ?>
-                        </div>
-                        <div>
-                            <h1 class="text-3xl font-bold text-gray-900"><?php echo htmlspecialchars($user['username']); ?></h1>
-                            <p class="text-gray-600">Member since <?php echo date('F Y', strtotime($user['created_at'])); ?></p>
-                            <?php if (!empty($user['bio'])): ?>
-                                <p class="mt-2 text-gray-700"><?php echo htmlspecialchars($user['bio']); ?></p>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                    
-                    <!-- Stats Grid -->
-                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
-                        <div class="bg-[#fff0e6] p-4 rounded-lg text-center">
-                            <div class="text-2xl font-bold text-[#ff6b00]"><?php echo $user['total_recipes']; ?></div>
-                            <div class="text-sm text-gray-600">Recipes</div>
-                        </div>
-                        <div class="bg-[#fff0e6] p-4 rounded-lg text-center">
-                            <div class="text-2xl font-bold text-[#ff6b00]"><?php echo $user['total_reviews']; ?></div>
-                            <div class="text-sm text-gray-600">Reviews</div>
-                        </div>
-                        <div class="bg-[#fff0e6] p-4 rounded-lg text-center">
-                            <div class="text-2xl font-bold text-[#ff6b00]"><?php echo $user['total_likes_received']; ?></div>
-                            <div class="text-sm text-gray-600">Likes Received</div>
-                        </div>
-                        <div class="bg-[#fff0e6] p-4 rounded-lg text-center">
-                            <div class="text-2xl font-bold text-[#ff6b00]"><?php echo $user['total_likes_given']; ?></div>
-                            <div class="text-sm text-gray-600">Likes Given</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Edit Profile Form -->
-            <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-6">
-                <div class="p-6 border-b">
-                    <h2 class="text-xl font-bold text-[#ff6b00]">Edit Profile</h2>
-                </div>
-                
-                <?php if (!empty($errors)): ?>
-                    <div class="alert-error mx-6 mt-4">
-                        <ul class="list-disc pl-5">
-                            <?php foreach ($errors as $error): ?>
-                                <li><?php echo $error; ?></li>
-                            <?php endforeach; ?>
-                        </ul>
-                    </div>
-                <?php endif; ?>
-                
-                <?php if (isset($_SESSION['success_message'])): ?>
-                    <div class="alert-success mx-6 mt-4">
-                        <?php 
-                        echo $_SESSION['success_message'];
-                        unset($_SESSION['success_message']);
-                        ?>
-                    </div>
-                <?php endif; ?>
-                
-                <form action="profile.php" method="post" class="p-6 space-y-6">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Username*</label>
-                        <input type="text" name="username" required class="form-input"
-                               value="<?php echo htmlspecialchars($user['username']); ?>">
-                    </div>
-                    
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Email*</label>
-                        <input type="email" name="email" required class="form-input"
-                               value="<?php echo htmlspecialchars($user['email']); ?>">
-                    </div>
-                    
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Bio</label>
-                        <textarea name="bio" rows="4" class="form-input"
-                                  placeholder="Tell us about yourself..."><?php echo htmlspecialchars($user['bio'] ?? ''); ?></textarea>
-                    </div>
-                    
-                    <div class="flex justify-end">
-                        <button type="submit" class="btn-primary">
-                            <i class="fas fa-save mr-2"></i>Save Changes
-                        </button>
-                    </div>
-                </form>
-            </div>
-            
-            <!-- Recent Activity -->
-            <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-                <div class="p-6 border-b">
-                    <h2 class="text-xl font-bold text-[#ff6b00]">Recent Activity</h2>
-                </div>
-                
-                <div class="p-6">
-                    <?php if (empty($activities)): ?>
-                        <p class="text-gray-600">No recent activity</p>
+<main class="container mx-auto px-4 py-8">
+    <div class="max-w-6xl mx-auto">
+        <!-- Profile Header -->
+        <div class="bg-white rounded-xl shadow-lg p-6 mb-8">
+            <div class="flex items-center space-x-6">
+                <div class="w-24 h-24 rounded-full bg-gray-200 flex items-center justify-center">
+                    <?php if (!empty($user['profile_image'])): ?>
+                        <img src="<?php echo htmlspecialchars($user['profile_image']); ?>" 
+                             alt="Profile" 
+                             class="w-full h-full rounded-full object-cover">
                     <?php else: ?>
-                        <div class="space-y-4">
-                            <?php foreach ($activities as $activity): ?>
-                                <div class="flex items-start space-x-4">
-                                    <div class="w-8 h-8 rounded-full bg-[#fff0e6] flex items-center justify-center">
-                                        <i class="fas <?php echo $activity['type'] === 'recipe' ? 'fa-utensils' : 'fa-comment'; ?> text-[#ff6b00]"></i>
-                                    </div>
-                                    <div>
-                                        <p class="text-gray-700">
-                                            <?php if ($activity['type'] === 'recipe'): ?>
-                                                Added a new recipe: 
-                                                <a href="recipe.php?id=<?php echo $activity['id']; ?>" 
-                                                   class="text-[#ff6b00] hover:text-[#ff8533] font-medium">
-                                                    <?php echo htmlspecialchars($activity['title']); ?>
-                                                </a>
-                                            <?php else: ?>
-                                                Reviewed 
-                                                <a href="recipe.php?id=<?php echo $activity['id']; ?>" 
-                                                   class="text-[#ff6b00] hover:text-[#ff8533] font-medium">
-                                                    <?php echo htmlspecialchars($activity['title']); ?>
-                                                </a>
-                                                <span class="text-yellow-500">
-                                                    <?php echo str_repeat('★', $activity['rating']) . str_repeat('☆', 5 - $activity['rating']); ?>
-                                                </span>
-                                            <?php endif; ?>
-                                        </p>
-                                        <?php if ($activity['type'] === 'review' && !empty($activity['comment'])): ?>
-                                            <p class="text-gray-600 mt-1"><?php echo htmlspecialchars($activity['comment']); ?></p>
-                                        <?php endif; ?>
-                                        <p class="text-sm text-gray-500 mt-1">
-                                            <?php echo date('F j, Y \a\t g:i a', strtotime($activity['created_at'])); ?>
-                                        </p>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
+                        <i class="fas fa-user text-4xl text-gray-400"></i>
                     <?php endif; ?>
                 </div>
+                <div class="flex-1">
+                    <h1 class="text-3xl font-bold text-gray-900"><?php echo htmlspecialchars($user['username']); ?></h1>
+                    <p class="text-gray-600">Member since <?php echo date('F Y', strtotime($user['created_at'])); ?></p>
+                </div>
+                <a href="edit-profile.php" class="btn-secondary">
+                    <i class="fas fa-edit mr-2"></i>Edit Profile
+                </a>
             </div>
         </div>
-    </main>
-    
-    <?php include 'includes/footer.php'; ?>
-</body>
-</html> 
+
+        <!-- Stats Overview -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-white rounded-xl shadow-lg p-6 text-center">
+                <div class="text-3xl font-bold text-[#ff6b00] mb-2"><?php echo $user['recipe_count']; ?></div>
+                <div class="text-gray-600">Recipes</div>
+            </div>
+            <div class="bg-white rounded-xl shadow-lg p-6 text-center">
+                <div class="text-3xl font-bold text-[#ff6b00] mb-2"><?php echo $user['review_count']; ?></div>
+                <div class="text-gray-600">Reviews</div>
+            </div>
+            <div class="bg-white rounded-xl shadow-lg p-6 text-center">
+                <div class="text-3xl font-bold text-[#ff6b00] mb-2"><?php echo $user['like_count']; ?></div>
+                <div class="text-gray-600">Likes Received</div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Recent Recipes -->
+            <div class="bg-white rounded-xl shadow-lg p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-semibold text-gray-900">Recent Recipes</h2>
+                    <a href="my-recipes.php" class="text-[#ff6b00] hover:text-[#ff8533]">View All</a>
+                </div>
+                
+                <?php if (empty($recent_recipes)): ?>
+                    <div class="text-center text-gray-500 py-4">
+                        <i class="fas fa-utensils text-4xl mb-2"></i>
+                        <p>No recipes yet</p>
+                    </div>
+                <?php else: ?>
+                    <div class="space-y-4">
+                        <?php foreach ($recent_recipes as $recipe): ?>
+                            <div class="flex items-center space-x-4">
+                                <div class="w-16 h-16 rounded-lg overflow-hidden bg-gray-200">
+                                    <?php if (!empty($recipe['image_path'])): ?>
+                                        <img src="<?php echo htmlspecialchars($recipe['image_path']); ?>" 
+                                             alt="<?php echo htmlspecialchars($recipe['title']); ?>"
+                                             class="w-full h-full object-cover">
+                                    <?php else: ?>
+                                        <div class="w-full h-full flex items-center justify-center">
+                                            <i class="fas fa-utensils text-gray-400"></i>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="flex-1">
+                                    <h3 class="font-semibold text-gray-900">
+                                        <?php echo htmlspecialchars($recipe['title']); ?>
+                                    </h3>
+                                    <div class="flex items-center text-sm text-gray-500">
+                                        <span class="mr-4">
+                                            <i class="fas fa-star text-yellow-400 mr-1"></i>
+                                            <?php echo number_format($recipe['avg_rating'] ?? 0, 1); ?>
+                                        </span>
+                                        <span>
+                                            <i class="fas fa-heart text-red-500 mr-1"></i>
+                                            <?php echo $recipe['like_count']; ?>
+                                        </span>
+                                    </div>
+                                </div>
+                                <a href="recipe.php?id=<?php echo $recipe['id']; ?>" 
+                                   class="text-[#ff6b00] hover:text-[#ff8533]">
+                                    <i class="fas fa-chevron-right"></i>
+                                </a>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- Recent Reviews -->
+            <div class="bg-white rounded-xl shadow-lg p-6">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-xl font-semibold text-gray-900">Recent Reviews</h2>
+                    <a href="my-reviews.php" class="text-[#ff6b00] hover:text-[#ff8533]">View All</a>
+                </div>
+                
+                <?php if (empty($recent_reviews)): ?>
+                    <div class="text-center text-gray-500 py-4">
+                        <i class="fas fa-comment text-4xl mb-2"></i>
+                        <p>No reviews yet</p>
+                    </div>
+                <?php else: ?>
+                    <div class="space-y-4">
+                        <?php foreach ($recent_reviews as $review): ?>
+                            <div class="flex items-center space-x-4">
+                                <div class="w-16 h-16 rounded-lg overflow-hidden bg-gray-200">
+                                    <?php if (!empty($review['image_path'])): ?>
+                                        <img src="<?php echo htmlspecialchars($review['image_path']); ?>" 
+                                             alt="<?php echo htmlspecialchars($review['recipe_title']); ?>"
+                                             class="w-full h-full object-cover">
+                                    <?php else: ?>
+                                        <div class="w-full h-full flex items-center justify-center">
+                                            <i class="fas fa-utensils text-gray-400"></i>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="flex-1">
+                                    <h3 class="font-semibold text-gray-900">
+                                        <?php echo htmlspecialchars($review['recipe_title']); ?>
+                                    </h3>
+                                    <div class="flex items-center text-sm">
+                                        <div class="text-yellow-400 mr-2">
+                                            <?php for ($i = 1; $i <= 5; $i++): ?>
+                                                <i class="fas fa-star<?php echo $i <= $review['rating'] ? '' : '-o'; ?>"></i>
+                                            <?php endfor; ?>
+                                        </div>
+                                        <span class="text-gray-500">
+                                            <?php echo date('M j, Y', strtotime($review['created_at'])); ?>
+                                        </span>
+                                    </div>
+                                </div>
+                                <a href="recipe.php?id=<?php echo $review['recipe_id']; ?>" 
+                                   class="text-[#ff6b00] hover:text-[#ff8533]">
+                                    <i class="fas fa-chevron-right"></i>
+                                </a>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+</main>
+
+<?php include 'includes/footer.php'; ?> 

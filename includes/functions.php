@@ -23,38 +23,36 @@ function validateInput($data, $type = 'string', $min = null, $max = null) {
 }
 
 function getRecipes($sort = 'newest', $filter = []) {
-    global $conn;
+    global $pdo;
+    
+    if (!isset($GLOBALS['pdo'])) {
+        error_log("Database connection not available in getRecipes function");
+        return [];
+    }
     
     $sql = "SELECT r.*, u.username, 
            (SELECT AVG(rating) FROM reviews WHERE recipe_id = r.id) as avg_rating
            FROM recipes r 
            JOIN users u ON r.user_id = u.id";
     
-    $where = [];
     $params = [];
-    $types = '';
     
     // Apply filters
     if (!empty($filter['cuisine'])) {
-        $where[] = "r.cuisine_type = ?";
+        $sql .= " WHERE r.cuisine_type = ?";
         $params[] = $filter['cuisine'];
-        $types .= 's';
     }
     
     if (!empty($filter['difficulty'])) {
-        $where[] = "r.difficulty = ?";
+        $sql .= empty($params) ? " WHERE " : " AND ";
+        $sql .= "r.difficulty = ?";
         $params[] = $filter['difficulty'];
-        $types .= 's';
     }
     
     if (!empty($filter['ingredient'])) {
-        $where[] = "r.ingredients LIKE ?";
+        $sql .= empty($params) ? " WHERE " : " AND ";
+        $sql .= "r.ingredients LIKE ?";
         $params[] = '%' . $filter['ingredient'] . '%';
-        $types .= 's';
-    }
-    
-    if (!empty($where)) {
-        $sql .= " WHERE " . implode(" AND ", $where);
     }
     
     // Apply sorting
@@ -69,16 +67,14 @@ function getRecipes($sort = 'newest', $filter = []) {
             $sql .= " ORDER BY r.created_at DESC";
     }
     
-    $stmt = $conn->prepare($sql);
-    
-    if (!empty($params)) {
-        $stmt->bind_param($types, ...$params);
+    try {
+        $stmt = $GLOBALS['pdo']->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
+    } catch (PDOException $e) {
+        error_log("Error in getRecipes: " . $e->getMessage());
+        return [];
     }
-    
-    $stmt->execute();
-    $result = $stmt->get_result();
-    
-    return $result->fetch_all(MYSQLI_ASSOC);
 }
 
 function uploadImage($file) {
@@ -99,83 +95,27 @@ function uploadImage($file) {
     
     // Check directory permissions
     if (!is_writable($target_dir)) {
-        // Try to fix permissions
-        if (!chmod($target_dir, 0777)) {
-            error_log("Uploads directory is not writable at: " . $target_dir);
-            error_log("Current permissions: " . substr(sprintf('%o', fileperms($target_dir)), -4));
-            return ['success' => false, 'message' => 'Uploads directory is not writable. Please check server permissions.'];
-        }
+        error_log("Upload directory is not writable: " . $target_dir);
+        return ['success' => false, 'message' => 'Upload directory is not writable. Please check server permissions.'];
     }
-
-    // Validate file type and get image information
-    $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
-    $finfo = finfo_open(FILEINFO_MIME_TYPE);
-    $mime_type = finfo_file($finfo, $file['tmp_name']);
-    finfo_close($finfo);
     
-    if (!in_array($mime_type, $allowed_types)) {
-        return ['success' => false, 'message' => 'Invalid file type. Only JPG, PNG and GIF are allowed'];
+    // Generate unique filename
+    $file_extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    $new_filename = uniqid() . '.' . $file_extension;
+    $target_file = $target_dir . '/' . $new_filename;
+    
+    // Check file type
+    $allowed_types = ['jpg', 'jpeg', 'png', 'gif'];
+    if (!in_array($file_extension, $allowed_types)) {
+        return ['success' => false, 'message' => 'Only JPG, JPEG, PNG & GIF files are allowed.'];
     }
-
-    // Get image information
-    $image_info = getimagesize($file['tmp_name']);
-    if ($image_info === false) {
-        return ['success' => false, 'message' => 'Invalid image file'];
-    }
-
-    // Generate a unique filename with proper extension
-    $extension = image_type_to_extension($image_info[2], false);
-    $filename = uniqid() . '_' . pathinfo($file['name'], PATHINFO_FILENAME) . '.' . $extension;
-    $target_path = $target_dir . $filename;
-    $web_path = 'uploads/' . $filename;
-
-    // Process and save the image
-    $source_image = null;
-    switch ($mime_type) {
-        case 'image/jpeg':
-            $source_image = imagecreatefromjpeg($file['tmp_name']);
-            break;
-        case 'image/png':
-            $source_image = imagecreatefrompng($file['tmp_name']);
-            break;
-        case 'image/gif':
-            $source_image = imagecreatefromgif($file['tmp_name']);
-            break;
-    }
-
-    if (!$source_image) {
-        return ['success' => false, 'message' => 'Failed to process image'];
-    }
-
-    // Preserve transparency for PNG and GIF
-    if ($mime_type === 'image/png' || $mime_type === 'image/gif') {
-        imagealphablending($source_image, true);
-        imagesavealpha($source_image, true);
-    }
-
-    // Save the image with high quality
-    $success = false;
-    switch ($mime_type) {
-        case 'image/jpeg':
-            $success = imagejpeg($source_image, $target_path, 100); // 100 is maximum quality
-            break;
-        case 'image/png':
-            $success = imagepng($source_image, $target_path, 0); // 0 is no compression
-            break;
-        case 'image/gif':
-            $success = imagegif($source_image, $target_path);
-            break;
-    }
-
-    // Free up memory
-    imagedestroy($source_image);
-
-    if ($success) {
-        chmod($target_path, 0666);
-        return ['success' => true, 'path' => $web_path];
+    
+    // Move uploaded file
+    if (move_uploaded_file($file['tmp_name'], $target_file)) {
+        return ['success' => true, 'filename' => $new_filename];
     } else {
-        error_log("Failed to save processed image. Target path: " . $target_path);
-        return ['success' => false, 'message' => 'Failed to save image. Please try again.'];
+        error_log("Failed to move uploaded file to: " . $target_file);
+        return ['success' => false, 'message' => 'Failed to upload file. Please try again.'];
     }
 }
 
@@ -185,9 +125,30 @@ function isLoggedIn() {
 
 function requireLogin() {
     if (!isLoggedIn()) {
-        $_SESSION['redirect_url'] = $_SERVER['REQUEST_URI'];
-        header("Location: login.php");
+        header('Location: login.php');
         exit();
     }
+}
+
+function getCuisineEmoji($cuisine) {
+    $emojis = [
+        'Italian' => '🍝',
+        'Mexican' => '🌮',
+        'Chinese' => '🥢',
+        'Japanese' => '🍱',
+        'Indian' => '🍛',
+        'Thai' => '🍜',
+        'American' => '🍔',
+        'Mediterranean' => '🥙',
+        'French' => '🥐',
+        'Greek' => '🥗',
+        'Vietnamese' => '🍜',
+        'Korean' => '🥘',
+        'Spanish' => '🥘',
+        'Middle Eastern' => '🥙',
+        'Other' => '🍽️'
+    ];
+    
+    return isset($emojis[$cuisine]) ? $emojis[$cuisine] : '🍽️';
 }
 ?>

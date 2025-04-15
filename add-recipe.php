@@ -59,34 +59,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 prep_time, cook_time, servings, difficulty, cuisine_type, image_path)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("issssiiisss", $user_id, $title, $description, $ingredients, $instructions, 
-                         $prep_time, $cook_time, $servings, $difficulty, $cuisine_type, $image_path);
+        $stmt = $GLOBALS['pdo']->prepare($sql);
+        $stmt->execute([
+            $user_id,
+            $title,
+            $description,
+            $ingredients,
+            $instructions,
+            $prep_time,
+            $cook_time,
+            $servings,
+            $difficulty,
+            $cuisine_type,
+            $image_path
+        ]);
         
-        if ($stmt->execute()) {
+        if ($stmt->rowCount() > 0) {
             $success = true;
             // Redirect to the newly created recipe
-            $recipe_id = $conn->insert_id;
+            $recipe_id = $GLOBALS['pdo']->lastInsertId();
             header("Location: recipe.php?id=" . $recipe_id);
             exit();
         } else {
-            $errors[] = "Error saving recipe: " . $stmt->error;
+            $errors[] = "Error saving recipe";
         }
     }
-}
-
-function getCuisineEmoji($cuisine) {
-    $emojis = [
-        'Italian' => '🍝',
-        'Mexican' => '🌮',
-        'Indian' => '🍛',
-        'Chinese' => '🥢',
-        'American' => '🍔',
-        'Japanese' => '🍱',
-        'Mediterranean' => '🫒',
-        'Other' => '🍽️'
-    ];
-    return $emojis[$cuisine] ?? '🍽️';
 }
 
 ?>

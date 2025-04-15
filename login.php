@@ -1,7 +1,73 @@
 <?php
+// Enable error reporting at the very top
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
 require_once 'includes/config.php';
 require_once 'includes/db.php';
 require_once 'includes/functions.php';
+
+$errors = [];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        $username = trim($_POST['username'] ?? '');
+        $password = $_POST['password'] ?? '';
+
+        if (empty($username)) {
+            $errors[] = "Username or email is required";
+        }
+
+        if (empty($password)) {
+            $errors[] = "Password is required";
+        }
+
+        if (empty($errors)) {
+            // Check if input is email or username
+            $stmt = $pdo->prepare("SELECT * FROM users WHERE username = ? OR email = ?");
+            $stmt->execute([$username, $username]);
+            $user = $stmt->fetch();
+
+            if ($user && password_verify($password, $user['password'])) {
+                // Set session variables
+                $_SESSION['user_id'] = $user['id'];
+                $_SESSION['username'] = $user['username'];
+                
+                // Handle remember me - only if the table exists
+                if (isset($_POST['remember'])) {
+                    try {
+                        // Check if remember_tokens table exists
+                        $stmt = $pdo->query("SHOW TABLES LIKE 'remember_tokens'");
+                        if ($stmt->rowCount() > 0) {
+                            $token = bin2hex(random_bytes(32));
+                            $expires = date('Y-m-d H:i:s', strtotime('+30 days'));
+                            
+                            $stmt = $pdo->prepare("INSERT INTO remember_tokens (user_id, token, expires_at) VALUES (?, ?, ?)");
+                            $stmt->execute([$user['id'], $token, $expires]);
+                            
+                            setcookie('remember_token', $token, strtotime('+30 days'), '/', '', true, true);
+                        }
+                    } catch (PDOException $e) {
+                        // Log error but don't stop the login process
+                        error_log("Remember me error: " . $e->getMessage());
+                    }
+                }
+
+                // Redirect to home page
+                header("Location: index.php");
+                exit();
+            } else {
+                $errors[] = "Invalid username/email or password";
+            }
+        }
+    } catch (PDOException $e) {
+        error_log("Login error: " . $e->getMessage());
+        $errors[] = "Database error: " . $e->getMessage();
+    } catch (Exception $e) {
+        error_log("General error: " . $e->getMessage());
+        $errors[] = "An error occurred: " . $e->getMessage();
+    }
+}
 
 $page_title = "Login";
 include 'includes/header.php';
@@ -13,6 +79,15 @@ include 'includes/header.php';
             <h2 class="text-3xl font-bold text-gray-800 mb-2">Welcome Back!</h2>
             <p class="text-gray-600">Sign in to continue cooking</p>
         </div>
+
+        <?php if (isset($_SESSION['success_message'])): ?>
+            <div class="bg-green-50 text-green-500 p-4 rounded-lg mb-6">
+                <?php 
+                echo $_SESSION['success_message'];
+                unset($_SESSION['success_message']);
+                ?>
+            </div>
+        <?php endif; ?>
 
         <?php if (!empty($errors)): ?>
             <div class="bg-red-50 text-red-500 p-4 rounded-lg mb-6">

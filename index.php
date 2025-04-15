@@ -513,28 +513,3 @@ $cuisines = ['Italian', 'Mexican', 'Indian', 'Chinese', 'American', 'Japanese', 
     </script>
 </body>
 </html>
-
-<?php
-function getCuisineEmoji($cuisine) {
-    $emojis = [
-        'Italian' => '🍝',
-        'Mexican' => '🌮',
-        'Indian' => '🍛',
-        'Chinese' => '🥢',
-        'American' => '🍔',
-        'Japanese' => '🍱',
-        'Mediterranean' => '🫒',
-        'Other' => '🍽️'
-    ];
-    return $emojis[$cuisine] ?? '🍽️';
-}
-
-function getDifficultyEmoji($difficulty) {
-    $emojis = [
-        'Easy' => '😊',
-        'Medium' => '😅',
-        'Hard' => '🤔'
-    ];
-    return $emojis[$difficulty] ?? '📝';
-}
-?>

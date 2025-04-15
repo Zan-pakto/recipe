@@ -14,39 +14,34 @@ $recipe_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
 if ($recipe_id > 0) {
     // First, check if the recipe exists and belongs to the user
-    $stmt = $conn->prepare("SELECT image_path FROM recipes WHERE id = ? AND user_id = ?");
-    $stmt->bind_param("ii", $recipe_id, $_SESSION['user_id']);
-    $stmt->execute();
-    $result = $stmt->get_result();
+    $stmt = $GLOBALS['pdo']->prepare("SELECT image_path FROM recipes WHERE id = ? AND user_id = ?");
+    $stmt->execute([$recipe_id, $_SESSION['user_id']]);
+    $recipe = $stmt->fetch();
     
-    if ($result->num_rows > 0) {
-        $recipe = $result->fetch_assoc();
-        
+    if ($recipe) {
         // Start transaction
-        $conn->begin_transaction();
+        $GLOBALS['pdo']->beginTransaction();
         
         try {
             // Delete reviews
-            $stmt = $conn->prepare("DELETE FROM reviews WHERE recipe_id = ?");
-            $stmt->bind_param("i", $recipe_id);
-            $stmt->execute();
+            $stmt = $GLOBALS['pdo']->prepare("DELETE FROM reviews WHERE recipe_id = ?");
+            $stmt->execute([$recipe_id]);
             
             // Delete likes
-            $stmt = $conn->prepare("DELETE FROM recipe_likes WHERE recipe_id = ?");
-            $stmt->bind_param("i", $recipe_id);
-            $stmt->execute();
+            $stmt = $GLOBALS['pdo']->prepare("DELETE FROM recipe_likes WHERE recipe_id = ?");
+            $stmt->execute([$recipe_id]);
             
             // Delete recipe
-            $stmt = $conn->prepare("DELETE FROM recipes WHERE id = ? AND user_id = ?");
-            $stmt->bind_param("ii", $recipe_id, $_SESSION['user_id']);
+            $stmt = $GLOBALS['pdo']->prepare("DELETE FROM recipes WHERE id = ? AND user_id = ?");
+            $stmt->execute([$recipe_id, $_SESSION['user_id']]);
             
-            if ($stmt->execute()) {
+            if ($stmt->rowCount() > 0) {
                 // Delete the image file if it exists
                 if (!empty($recipe['image_path']) && file_exists($recipe['image_path'])) {
                     unlink($recipe['image_path']);
                 }
                 
-                $conn->commit();
+                $GLOBALS['pdo']->commit();
                 $_SESSION['success_message'] = "Recipe deleted successfully!";
                 header("Location: my-recipes.php");
                 exit();
@@ -54,7 +49,7 @@ if ($recipe_id > 0) {
                 throw new Exception("Failed to delete recipe");
             }
         } catch (Exception $e) {
-            $conn->rollback();
+            $GLOBALS['pdo']->rollBack();
             $_SESSION['error_message'] = "Error deleting recipe: " . $e->getMessage();
             header("Location: recipe.php?id=" . $recipe_id);
             exit();

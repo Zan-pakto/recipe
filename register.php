@@ -3,6 +3,64 @@ require_once 'includes/config.php';
 require_once 'includes/db.php';
 require_once 'includes/functions.php';
 
+$errors = [];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $username = trim($_POST['username']);
+    $email = trim($_POST['email']);
+    $password = $_POST['password'];
+    $confirm_password = $_POST['confirm_password'];
+
+    // Validation
+    if (empty($username)) {
+        $errors[] = "Username is required";
+    } elseif (strlen($username) < 3) {
+        $errors[] = "Username must be at least 3 characters long";
+    }
+
+    if (empty($email)) {
+        $errors[] = "Email is required";
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $errors[] = "Invalid email format";
+    }
+
+    if (empty($password)) {
+        $errors[] = "Password is required";
+    } elseif (strlen($password) < 6) {
+        $errors[] = "Password must be at least 6 characters long";
+    }
+
+    if ($password !== $confirm_password) {
+        $errors[] = "Passwords do not match";
+    }
+
+    // Check if username or email already exists
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM users WHERE username = ? OR email = ?");
+    $stmt->execute([$username, $email]);
+    if ($stmt->fetchColumn() > 0) {
+        $errors[] = "Username or email already exists";
+    }
+
+    // If no errors, proceed with registration
+    if (empty($errors)) {
+        try {
+            $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+            
+            $stmt = $pdo->prepare("INSERT INTO users (username, email, password) VALUES (?, ?, ?)");
+            $stmt->execute([$username, $email, $hashed_password]);
+
+            // Set success message in session
+            $_SESSION['success_message'] = "Registration successful! Please login with your credentials.";
+            
+            // Redirect to login page
+            header("Location: login.php");
+            exit();
+        } catch (PDOException $e) {
+            $errors[] = "Registration failed. Please try again later.";
+        }
+    }
+}
+
 $page_title = "Register";
 include 'includes/header.php';
 ?>

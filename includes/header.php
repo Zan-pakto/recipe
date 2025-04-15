@@ -186,15 +186,15 @@ $current_page = basename($_SERVER['PHP_SELF'], '.php');
                     
                     <!-- Categories Dropdown -->
                     <div class="nav-group">
-                        <a href="#" class="nav-item">
+                        <a href="categories.php" class="nav-item <?php echo $current_page === 'categories' ? 'active' : ''; ?>">
                             <i class="fas fa-th"></i>
                             <span>Categories</span>
                         </a>
-                        <a href="#" class="nav-item">
+                        <a href="about.php" class="nav-item <?php echo $current_page === 'about' ? 'active' : ''; ?>">
                             <i class="fas fa-info-circle"></i>
                             <span>About</span>
                         </a>
-                        <a href="#" class="nav-item">
+                        <a href="recipes.php" class="nav-item <?php echo $current_page === 'recipes' ? 'active' : ''; ?>">
                             <i class="fas fa-utensils"></i>
                             <span>Recipes</span>
                         </a>
@@ -213,28 +213,26 @@ $current_page = basename($_SERVER['PHP_SELF'], '.php');
                             </a>
                             
                             <!-- Profile Menu -->
-                            <div class="profile-menu">
-                                <button class="profile-trigger">
-                                    <div class="profile-avatar">
-                                        <?php echo substr($_SESSION['username'], 0, 1); ?>
-                                    </div>
-                                    <i class="fas fa-chevron-down text-gray-400"></i>
+                            <div class="profile-menu relative">
+                                <button class="nav-item flex items-center space-x-2">
+                                    <i class="fas fa-user-circle"></i>
+                                    <span>Profile</span>
+                                    <i class="fas fa-chevron-down text-xs"></i>
                                 </button>
-                                
-                                <div class="profile-menu-content">
+                                <div class="profile-menu-content absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg py-2 opacity-0 transform -translate-y-2 invisible transition-all duration-200">
                                     <a href="profile.php" class="menu-item">
                                         <i class="fas fa-user"></i>
-                                        <span>Profile</span>
+                                        <span>My Profile</span>
                                     </a>
-                                    <a href="favorites.php" class="menu-item">
-                                        <i class="fas fa-heart"></i>
-                                        <span>Favorites</span>
+                                    <a href="my-reviews.php" class="menu-item">
+                                        <i class="fas fa-star"></i>
+                                        <span>My Reviews</span>
                                     </a>
                                     <a href="settings.php" class="menu-item">
                                         <i class="fas fa-cog"></i>
                                         <span>Settings</span>
                                     </a>
-                                    <hr class="my-2 border-gray-200">
+                                    <div class="border-t my-2"></div>
                                     <a href="logout.php" class="menu-item danger">
                                         <i class="fas fa-sign-out-alt"></i>
                                         <span>Logout</span>
@@ -242,11 +240,11 @@ $current_page = basename($_SERVER['PHP_SELF'], '.php');
                                 </div>
                             </div>
                         <?php else: ?>
-                            <a href="login.php" class="nav-item">
+                            <a href="login.php" class="nav-item <?php echo $current_page === 'login' ? 'active' : ''; ?>">
                                 <i class="fas fa-sign-in-alt"></i>
                                 <span>Login</span>
                             </a>
-                            <a href="register.php" class="nav-item">
+                            <a href="register.php" class="nav-item <?php echo $current_page === 'register' ? 'active' : ''; ?>">
                                 <i class="fas fa-user-plus"></i>
                                 <span>Register</span>
                             </a>

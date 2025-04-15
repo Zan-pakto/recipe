@@ -25,18 +25,15 @@ $cuisines = [
 ];
 
 // Fetch existing recipe data
-$stmt = $conn->prepare("SELECT * FROM recipes WHERE id = ? AND user_id = ?");
-$stmt->bind_param("ii", $recipe_id, $_SESSION['user_id']);
-$stmt->execute();
-$result = $stmt->get_result();
+$stmt = $GLOBALS['pdo']->prepare("SELECT * FROM recipes WHERE id = ? AND user_id = ?");
+$stmt->execute([$recipe_id, $_SESSION['user_id']]);
+$recipe = $stmt->fetch();
 
-if ($result->num_rows === 0) {
+if (!$recipe) {
     $_SESSION['error_message'] = "Recipe not found or you don't have permission to edit it.";
     header("Location: my-recipes.php");
     exit();
 }
-
-$recipe = $result->fetch_assoc();
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -81,10 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // If no errors, update the recipe
     if (empty($errors)) {
         try {
-            // Enable error reporting for debugging
-            mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-            
-            $stmt = $conn->prepare("
+            $stmt = $GLOBALS['pdo']->prepare("
                 UPDATE recipes 
                 SET title = ?,
                     description = ?,
@@ -99,11 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 WHERE id = ? AND user_id = ?
             ");
             
-            if (!$stmt) {
-                throw new Exception("Prepare failed: " . $conn->error);
-            }
-            
-            $stmt->bind_param("ssssiiisssii",
+            $stmt->execute([
                 $title,
                 $description,
                 $ingredients,
@@ -116,11 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $image_path,
                 $recipe_id,
                 $_SESSION['user_id']
-            );
-            
-            if (!$stmt->execute()) {
-                throw new Exception("Execute failed: " . $stmt->error);
-            }
+            ]);
             
             $_SESSION['success_message'] = "Recipe updated successfully!";
             header("Location: recipe.php?id=" . $recipe_id);
@@ -128,12 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
         } catch (Exception $e) {
             $errors[] = "Database error: " . $e->getMessage();
-            // Log the error for debugging
             error_log("Recipe update error: " . $e->getMessage());
-        } finally {
-            if (isset($stmt)) {
-                $stmt->close();
-            }
         }
     }
 }
@@ -142,21 +123,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 function isCuisineSelected($cuisine) {
     global $recipe;
     return $recipe['cuisine_type'] === $cuisine ? 'selected' : '';
-}
-
-// Function to get cuisine emoji
-function getCuisineEmoji($cuisine) {
-    $emojis = [
-        'Italian' => '🍝',
-        'Mexican' => '🌮',
-        'Indian' => '🍛',
-        'Chinese' => '🥢',
-        'American' => '🍔',
-        'Japanese' => '🍱',
-        'Mediterranean' => '🫒',
-        'Other' => '🍽️'
-    ];
-    return $emojis[$cuisine] ?? '🍽️';
 }
 ?>
 
@@ -198,174 +164,92 @@ function getCuisineEmoji($cuisine) {
                                value="<?php echo htmlspecialchars($recipe['title']); ?>">
                     </div>
                     
-                    <!-- Cuisine Type -->
-                    <div class="mb-6">
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Cuisine Type</label>
-                        <div class="relative">
-                            <select name="cuisine_type" class="form-select w-full py-3 px-4 border border-gray-300 bg-white rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-[#ff6b00] focus:border-transparent appearance-none cursor-pointer">
-                                <?php foreach ($cuisines as $cuisine => $emoji): ?>
-                                    <option value="<?php echo $cuisine; ?>" 
-                                            <?php echo $recipe['cuisine_type'] === $cuisine ? 'selected' : ''; ?>>
-                                        <?php echo $emoji . ' ' . $cuisine; ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
-                                <svg class="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                                    <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
-                                </svg>
-                            </div>
-                        </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Cuisine Type*</label>
+                        <select name="cuisine_type" required class="form-select">
+                            <?php foreach ($cuisines as $cuisine => $emoji): ?>
+                                <option value="<?php echo $cuisine; ?>" <?php echo isCuisineSelected($cuisine); ?>>
+                                    <?php echo $emoji . ' ' . $cuisine; ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
                 </div>
                 
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                    <textarea name="description" rows="3" class="form-input"><?php echo htmlspecialchars($recipe['description']); ?></textarea>
+                    <textarea name="description" rows="3" class="form-textarea"><?php echo htmlspecialchars($recipe['description']); ?></textarea>
                 </div>
                 
-                <!-- Image Upload -->
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Recipe Image</label>
-                    <?php if (!empty($recipe['image_path'])): ?>
-                        <div class="mb-2">
-                            <img src="<?php echo htmlspecialchars($recipe['image_path']); ?>" 
-                                 alt="Current recipe image" class="w-32 h-32 object-cover rounded">
-                        </div>
-                    <?php endif; ?>
-                    <input type="file" name="image" accept="image/*" class="form-input">
-                    <p class="mt-1 text-sm text-gray-500">Leave empty to keep current image. Max size: 10MB (JPEG, PNG, GIF)</p>
-                </div>
-                
-                <!-- Times and Servings -->
+                <!-- Recipe Details -->
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Prep Time (mins)*</label>
-                        <input type="number" name="prep_time" min="1" required class="form-input"
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Prep Time (minutes)*</label>
+                        <input type="number" name="prep_time" required min="1" class="form-input"
                                value="<?php echo $recipe['prep_time']; ?>">
                     </div>
                     
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Cook Time (mins)*</label>
-                        <input type="number" name="cook_time" min="1" required class="form-input"
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Cook Time (minutes)*</label>
+                        <input type="number" name="cook_time" required min="1" class="form-input"
                                value="<?php echo $recipe['cook_time']; ?>">
                     </div>
                     
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Servings*</label>
-                        <input type="number" name="servings" min="1" required class="form-input"
+                        <input type="number" name="servings" required min="1" class="form-input"
                                value="<?php echo $recipe['servings']; ?>">
                     </div>
                 </div>
                 
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Difficulty*</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Difficulty Level*</label>
                     <select name="difficulty" required class="form-select">
-                        <option value="Easy" <?php echo $recipe['difficulty'] === 'Easy' ? 'selected' : ''; ?>>Easy</option>
-                        <option value="Medium" <?php echo $recipe['difficulty'] === 'Medium' ? 'selected' : ''; ?>>Medium</option>
-                        <option value="Hard" <?php echo $recipe['difficulty'] === 'Hard' ? 'selected' : ''; ?>>Hard</option>
+                        <option value="Easy" <?php echo isCuisineSelected('Easy'); ?>>Easy</option>
+                        <option value="Medium" <?php echo isCuisineSelected('Medium'); ?>>Medium</option>
+                        <option value="Hard" <?php echo isCuisineSelected('Hard'); ?>>Hard</option>
                     </select>
                 </div>
                 
-                <!-- Ingredients -->
+                <!-- Recipe Content -->
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Ingredients*</label>
-                    <p class="text-sm text-gray-500 mb-2">Enter one ingredient per line</p>
-                    <textarea name="ingredients" rows="6" required class="form-input font-mono"><?php echo htmlspecialchars($recipe['ingredients']); ?></textarea>
+                    <textarea name="ingredients" rows="6" required class="form-textarea"
+                              placeholder="Enter each ingredient on a new line"><?php echo htmlspecialchars($recipe['ingredients']); ?></textarea>
                 </div>
                 
-                <!-- Instructions -->
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Instructions*</label>
-                    <p class="text-sm text-gray-500 mb-2">Enter one step per line</p>
-                    <textarea name="instructions" rows="8" required class="form-input"><?php echo htmlspecialchars($recipe['instructions']); ?></textarea>
+                    <textarea name="instructions" rows="8" required class="form-textarea"
+                              placeholder="Enter each step on a new line"><?php echo htmlspecialchars($recipe['instructions']); ?></textarea>
                 </div>
                 
-                <!-- Submit Buttons -->
-                <div class="flex justify-end space-x-4 mt-6">
-                    <a href="recipe.php?id=<?php echo $recipe_id; ?>" class="px-6 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors duration-200">
+                <!-- Image Upload -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Recipe Image</label>
+                    <?php if ($recipe['image_path']): ?>
+                        <div class="mb-2">
+                            <img src="<?php echo htmlspecialchars($recipe['image_path']); ?>" 
+                                 alt="Current recipe image" 
+                                 class="w-32 h-32 object-cover rounded-lg">
+                        </div>
+                    <?php endif; ?>
+                    <input type="file" name="image" accept="image/*" class="form-input">
+                    <p class="text-sm text-gray-500 mt-1">Leave empty to keep the current image</p>
+                </div>
+                
+                <!-- Submit Button -->
+                <div class="flex justify-end space-x-4">
+                    <a href="recipe.php?id=<?php echo $recipe_id; ?>" 
+                       class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
                         Cancel
                     </a>
-                    <button type="submit" name="save_changes" class="px-6 py-2 bg-[#ff6b00] text-white rounded-lg hover:bg-[#ff8533] transition-colors duration-200 flex items-center">
-                        <i class="fas fa-save mr-2"></i>
+                    <button type="submit" class="px-4 py-2 bg-[#ff6b00] text-white rounded-lg hover:bg-[#e66000]">
                         Save Changes
                     </button>
                 </div>
             </form>
         </div>
     </main>
-    
-    <?php include 'includes/footer.php'; ?>
-    
-    <script>
-        // Preview image before upload
-        const imageInput = document.querySelector('input[type="file"]');
-        imageInput.addEventListener('change', function(e) {
-            if (e.target.files && e.target.files[0]) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const preview = document.querySelector('img');
-                    if (preview) {
-                        preview.src = e.target.result;
-                    } else {
-                        const newPreview = document.createElement('img');
-                        newPreview.src = e.target.result;
-                        newPreview.classList.add('w-32', 'h-32', 'object-cover', 'rounded', 'mb-2');
-                        imageInput.parentNode.insertBefore(newPreview, imageInput);
-                    }
-                }
-                reader.readAsDataURL(e.target.files[0]);
-            }
-        });
-
-        // Form validation
-        document.querySelector('form').addEventListener('submit', function(e) {
-            const title = document.querySelector('input[name="title"]').value.trim();
-            const ingredients = document.querySelector('textarea[name="ingredients"]').value.trim();
-            const instructions = document.querySelector('textarea[name="instructions"]').value.trim();
-            const cuisine_type = document.querySelector('select[name="cuisine_type"]');
-            
-            let errors = [];
-            
-            if (!title) errors.push('Recipe title is required');
-            if (!ingredients) errors.push('Ingredients are required');
-            if (!instructions) errors.push('Instructions are required');
-            if (!cuisine_type.value) errors.push('Please select a cuisine type');
-            
-            if (errors.length > 0) {
-                e.preventDefault();
-                alert(errors.join('\n'));
-            }
-        });
-
-        // Remove the cuisine selection event listeners since we're using a select element now
-        document.querySelector('select[name="cuisine_type"]').addEventListener('change', function() {
-            this.style.borderColor = '#ff6b00';
-        });
-    </script>
-
-    <style>
-        /* Custom styles for the select dropdown */
-        .form-select {
-            background-image: none;
-        }
-        
-        .form-select option {
-            padding: 8px;
-            font-size: 1rem;
-        }
-        
-        /* Hover effect for options */
-        .form-select option:hover {
-            background-color: #fff0e6;
-            color: #ff6b00;
-        }
-        
-        /* Selected option style */
-        .form-select option:checked {
-            background-color: #fff0e6;
-            color: #ff6b00;
-        }
-    </style>
 </body>
 </html>
